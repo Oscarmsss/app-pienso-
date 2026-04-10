@@ -31,30 +31,31 @@ if st.button("Añadir pedido"):
 
 # ------------------- TOLVAS -------------------
 
-st.subheader("Tolvas")
+st.subheader("Tolvas (stock real)")
 
-capacidades = {
-    "Tolva 1": 23000,
-    "Tolva 2": 23000,
-    "Tolva 3": 20000,
-    "Tolva 4": 20000,
-    "Tolva 5": 20000,
-    "Tolva 6": 20000,
-    "Tolva 7": 20000,
-    "Tolva 8": 20000,
-    "Tolva 9": 20000,
-    "Tolva 10": 20000
-}
+tolvas = {}
 
-stock_tolvas = {}
+for i in range(1, 11):
+    st.markdown(f"**Tolva {i}**")
 
-for tolva, capacidad in capacidades.items():
-    stock_tolvas[tolva] = st.number_input(
-        f"{tolva} (capacidad {capacidad} kg)",
+    tipo_tolva = st.selectbox(
+        f"Tipo Tolva {i}",
+        ["Vacía"] + list(TIPOS.keys()),
+        key=f"tipo_{i}"
+    )
+
+    capacidad = 23000 if i in [1, 2] else 20000
+
+    kg_tolva = st.number_input(
+        f"Kg en Tolva {i} (max {capacidad})",
         min_value=0,
         max_value=capacidad,
-        key=tolva
+        key=f"kg_{i}"
     )
+
+    if tipo_tolva != "Vacía":
+        tolvas.setdefault(tipo_tolva, 0)
+        tolvas[tipo_tolva] += kg_tolva
 
 # ------------------- PEDIDOS -------------------
 
@@ -68,21 +69,19 @@ if st.button("Borrar pedidos"):
 
 # ------------------- CALCULO -------------------
 
-def calcular(pedidos, stock_tolvas):
+def calcular(pedidos, tolvas):
 
     agrupado = {}
 
     for tipo, kg in pedidos:
         agrupado[tipo] = agrupado.get(tipo, 0) + kg
 
-    total_stock = sum(stock_tolvas.values())
-
     resultado = []
 
     for tipo, kg in agrupado.items():
 
-        # 🔥 stock total disponible
-        kg_necesario = max(0, kg - total_stock)
+        stock = tolvas.get(tipo, 0)
+        kg_necesario = max(0, kg - stock)
 
         porcentaje = TIPOS[tipo]
 
@@ -92,7 +91,7 @@ def calcular(pedidos, stock_tolvas):
         resultado.append({
             "tipo": tipo,
             "pedido": int(kg),
-            "stock_total": int(total_stock),
+            "stock": int(stock),
             "fabricar": int(kg_necesario),
             "fichas": fichas,
             "dosificacion": int(kg_base)
@@ -100,20 +99,88 @@ def calcular(pedidos, stock_tolvas):
 
     return resultado
 
+# ------------------- ORDEN INTELIGENTE -------------------
+
+def ordenar(fabricacion):
+
+    orden = []
+
+    inicios = []
+    migas = []
+    crecimientos = []
+    fines = []
+    camperos = []
+
+    for f in fabricacion:
+        t = f["tipo"].lower()
+
+        if "inicio" in t:
+            inicios.append(f)
+        elif "migas" in t:
+            migas.append(f)
+        elif "crecimiento" in t:
+            crecimientos.append(f)
+        elif "fin" in t:
+            fines.append(f)
+        elif "campero" in t:
+            camperos.append(f)
+
+    orden.extend(inicios)
+    orden.extend(migas)
+    orden.extend(crecimientos)
+    orden.extend(fines)
+
+    # 🔥 Regla camperos
+    for c in camperos:
+        if not any("fin vegetal" in f["tipo"].lower() for f in orden):
+            orden.append({
+                "tipo": "Fin vegetal (limpieza)",
+                "pedido": 0,
+                "stock": 0,
+                "fabricar": 3000,
+                "fichas": 1,
+                "dosificacion": 2600
+            })
+
+        orden.append(c)
+
+    return orden
+
+# ------------------- VALIDACION -------------------
+
+def validar(orden):
+
+    avisos = []
+
+    for i in range(len(orden)-1):
+        actual = orden[i]["tipo"]
+        siguiente = orden[i+1]["tipo"]
+
+        if ("inicio" in actual.lower() or "migas" in actual.lower()) and "fin" in siguiente.lower():
+            avisos.append(f"⚠️ No permitido: {actual} → {siguiente}")
+
+    return avisos
+
 # ------------------- RESULTADO -------------------
 
 if st.button("Generar fabricación"):
 
-    resultado = calcular(st.session_state.pedidos, stock_tolvas)
+    fabricacion = calcular(st.session_state.pedidos, tolvas)
+    fabricacion = ordenar(fabricacion)
+    avisos = validar(fabricacion)
 
-    st.subheader("Fabricación")
+    st.subheader("Fabricación optimizada")
 
-    for r in resultado:
-
+    for f in fabricacion:
         st.write(
-            f"{r['tipo']} → Pedido: {r['pedido']} kg | "
-            f"Stock total: {r['stock_total']} kg | "
-            f"Fabricar: {r['fabricar']} kg | "
-            f"{r['fichas']} fichas | "
-            f"{r['dosificacion']} kg dosificación"
+            f"{f['tipo']} → Pedido: {f['pedido']} | "
+            f"Stock: {f['stock']} | "
+            f"Fabricar: {f['fabricar']} | "
+            f"{f['fichas']} fichas | "
+            f"{f['dosificacion']} kg dosificación"
         )
+
+    if avisos:
+        st.subheader("Avisos")
+        for a in avisos:
+            st.warning(a)
