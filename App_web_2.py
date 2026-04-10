@@ -1,7 +1,7 @@
 import streamlit as st
 from math import ceil
 
-st.title("Planificador de Fabricación")
+st.title("Planificador de Fabricación Inteligente")
 
 TIPOS = {
     "Inicio": 0.05,
@@ -31,7 +31,7 @@ if st.button("Añadir pedido"):
 
 # ------------------- TOLVAS -------------------
 
-st.subheader("Tolvas")
+st.subheader("Tolvas (stock real)")
 
 stock_por_tipo = {}
 
@@ -69,94 +69,99 @@ for i, p in enumerate(st.session_state.pedidos):
 if st.button("Borrar pedidos"):
     st.session_state.pedidos = []
 
-# ------------------- CALCULO -------------------
+# ------------------- OPTIMIZACIÓN REAL -------------------
 
-def calcular(pedidos, stock):
+def generar_bloques(pedidos, stock):
 
-    agrupado = {}
+    bloques = []
 
     for tipo, kg in pedidos:
-        agrupado[tipo] = agrupado.get(tipo, 0) + kg
-
-    resultado = []
-
-    for tipo, kg in agrupado.items():
 
         stock_tipo = stock.get(tipo, 0)
         kg_necesario = max(0, kg - stock_tipo)
 
+        if kg_necesario == 0:
+            continue
+
         porcentaje = TIPOS[tipo]
+        kg_base = kg_necesario / (1 + porcentaje)
 
-        kg_base = kg_necesario / (1 + porcentaje) if kg_necesario > 0 else 0
-        fichas = ceil(kg_base / 3000) if kg_necesario > 0 else 0
+        fichas = ceil(kg_base / 3000)
 
-        resultado.append({
-            "tipo": tipo,
-            "fabricar": int(kg_necesario),
-            "fichas": fichas,
-            "dosificacion": int(kg_base)
-        })
+        for _ in range(fichas):
+            bloques.append(tipo)
+
+    return bloques
+
+
+def es_compatible(anterior, siguiente):
+
+    if anterior is None:
+        return True
+
+    anterior = anterior.lower()
+    siguiente = siguiente.lower()
+
+    # 🔥 regla contaminación
+    if ("inicio" in anterior or "migas" in anterior) and "fin" in siguiente:
+        return False
+
+    return True
+
+
+def optimizar(bloques):
+
+    resultado = []
+    ultimo = None
+
+    while bloques:
+
+        colocado = False
+
+        for i, tipo in enumerate(bloques):
+
+            if es_compatible(ultimo, tipo):
+                resultado.append(tipo)
+                ultimo = tipo
+                bloques.pop(i)
+                colocado = True
+                break
+
+        # 🔥 si no hay compatible, forzar el menos malo
+        if not colocado:
+            tipo = bloques.pop(0)
+            resultado.append(tipo)
+            ultimo = tipo
 
     return resultado
-
-# ------------------- ORDEN SIN CONTAMINACIÓN -------------------
-
-def ordenar(fabricacion):
-
-    orden = []
-
-    for f in fabricacion:
-
-        if orden:
-            anterior = orden[-1]["tipo"].lower()
-            actual = f["tipo"].lower()
-
-            # 🔥 BLOQUEO CONTAMINACIÓN
-            if ("inicio" in anterior or "migas" in anterior) and "fin" in actual:
-
-                orden.append({
-                    "tipo": "Fin vegetal (limpieza)",
-                    "fabricar": 3000,
-                    "fichas": 1,
-                    "dosificacion": 2600,
-                    "limpieza": True
-                })
-
-        # 🔥 REGLA CAMPEROS
-        if "campero" in f["tipo"].lower():
-            if not orden or "fin vegetal" not in orden[-1]["tipo"].lower():
-                orden.append({
-                    "tipo": "Fin vegetal (limpieza)",
-                    "fabricar": 3000,
-                    "fichas": 1,
-                    "dosificacion": 2600,
-                    "limpieza": True
-                })
-
-        f["limpieza"] = False
-        orden.append(f)
-
-    return orden
 
 # ------------------- RESULTADO -------------------
 
 if st.button("Generar fabricación"):
 
-    fabricacion = calcular(st.session_state.pedidos, stock_por_tipo)
-    fabricacion = ordenar(fabricacion)
+    bloques = generar_bloques(st.session_state.pedidos, stock_por_tipo)
+    orden = optimizar(bloques)
 
     st.subheader("Fabricación optimizada")
 
-    for f in fabricacion:
+    conteo = {}
 
-        if f.get("limpieza"):
-            st.warning(
-                f"🔧 LIMPIEZA → {f['fichas']} ficha → {f['dosificacion']} kg"
-            )
-        else:
-            st.write(
-                f"{f['tipo']} → "
-                f"{f['fabricar']} kg | "
-                f"{f['fichas']} fichas | "
-                f"{f['dosificacion']} kg dosificación"
-            )
+    for tipo in orden:
+        conteo[tipo] = conteo.get(tipo, 0) + 1
+
+    for tipo, fichas in conteo.items():
+
+        porcentaje = TIPOS[tipo]
+        kg_base = fichas * 3000
+        kg_final = int(kg_base * (1 + porcentaje))
+
+        st.write(
+            f"{tipo} → {fichas} fichas | "
+            f"{kg_final} kg final | "
+            f"{kg_base} kg dosificación"
+        )
+
+    st.subheader("Orden de fabricación")
+
+    for i, tipo in enumerate(orden):
+        st.write(f"{i+1}. {tipo}")
